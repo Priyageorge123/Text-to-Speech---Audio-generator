@@ -1,45 +1,37 @@
-from flask import Flask, request, jsonify, send_from_directory
-import requests
+from flask import Flask, request, jsonify
 from pydub import AudioSegment
 from io import BytesIO
-import os
+import requests
 
 app = Flask(__name__)
 
 TTS_URL = "https://dfki-3109.dfki.de/tts/run/predict"
 FILE_BASE_URL = "https://dfki-3109.dfki.de/tts/file="
-OUTPUT_DIR = "audio_files"
+MAX_CHAR_LIMIT = 100  # Define a reasonable character limit for each TTS request
 
-if not os.path.exists(OUTPUT_DIR):
-    os.makedirs(OUTPUT_DIR)
+def split_text(text, max_length):
+    """
+    Split the text into smaller parts each not exceeding max_length characters.
+    This function ensures that words are not split.
+    """
+    words = text.split()
+    current_segment = []
+    current_length = 0
 
-@app.route('/text-to-speech', methods=['POST'])
-def text_to_speech():
-    data = request.get_json()
-    text = data.get('text', '')
+    for word in words:
+        if current_length + len(word) + 1 > max_length:
+            yield ' '.join(current_segment)
+            current_segment = [word]
+            current_length = len(word) + 1
+        else:
+            current_segment.append(word)
+            current_length += len(word) + 1
 
-    # Split the text into sentences
-    sentences = text.split('.')
-    sentences = [sentence.strip() for sentence in sentences if sentence.strip()]
+    if current_segment:
+        yield ' '.join(current_segment)
 
-    # Process each sentence
-    audio_segments = []
-    for sentence in sentences:
-        audio_segment = process_sentence(sentence)
-        if audio_segment:
-            audio_segments.append(audio_segment)
-
-    # Concatenate all audio segments
-    if audio_segments:
-        combined = sum(audio_segments[1:], audio_segments[0])
-        output_path = os.path.join(OUTPUT_DIR, "output.mp3")
-        combined.export(output_path, format="mp3")
-        return jsonify({"audio_file": "output.mp3"})
-    else:
-        return jsonify({"error": "Failed to generate audio for the given text"}), 500
-
-def process_sentence(sentence):
-    response = requests.post(TTS_URL, json={"data": ["de", sentence]})
+def process_sentence(language, sentence):
+    response = requests.post(TTS_URL, json={"data": [language, sentence]})
     if response.status_code == 200:
         response_json = response.json()
         try:
@@ -47,13 +39,34 @@ def process_sentence(sentence):
             audio_response = requests.get(audio_url)
             if audio_response.status_code == 200:
                 return AudioSegment.from_wav(BytesIO(audio_response.content))
-        except (KeyError, IndexError) as e:
+        except KeyError as e:
             print(f"Unexpected response structure: {response_json}")
     return None
 
-@app.route('/audio/<filename>', methods=['GET'])
-def get_audio_file(filename):
-    return send_from_directory(OUTPUT_DIR, filename)
+@app.route('/text-to-speech', methods=['POST'])
+def text_to_speech():
+    data = request.get_json()
+    text = data.get("text", "")
+    language = data.get("language", "de")  # Default to German if not specified
+
+    sentences = text.split('.')
+    sentences = [sentence.strip() for sentence in sentences if sentence.strip()]
+
+    audio_segments = []
+    for sentence in sentences:
+        for segment in split_text(sentence, MAX_CHAR_LIMIT):
+            audio_segment = process_sentence(language, segment)
+            if audio_segment:
+                audio_segments.append(audio_segment)
+                audio_segments.append(AudioSegment.silent(duration=500))  # 0.5 seconds between segments
+        audio_segments.append(AudioSegment.silent(duration=800))  # 0.8 seconds between sentences
+
+    if audio_segments:
+        combined_audio = sum(audio_segments)
+        combined_audio.export("output.mp3", format="mp3")
+        return jsonify({"audio_file": "output.mp3"})
+    else:
+        return jsonify({"error": "Unable to generate audio"}), 500
 
 if __name__ == '__main__':
     app.run(debug=True)
