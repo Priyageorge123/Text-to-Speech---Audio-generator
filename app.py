@@ -58,8 +58,8 @@ def text_to_speech():
             audio_segment = process_sentence(language, segment)
             if audio_segment:
                 audio_segments.append(audio_segment)
-                audio_segments.append(AudioSegment.silent(duration=500))  # 0.5 seconds between segments
-        audio_segments.append(AudioSegment.silent(duration=800))  # 0.8 seconds between sentences
+                audio_segments.append(AudioSegment.silent(duration=350))  # 0.35 seconds between segments
+        audio_segments.append(AudioSegment.silent(duration=350))  # 0.35 seconds between sentences
 
     if audio_segments:
         combined_audio = sum(audio_segments)
@@ -69,4 +69,4 @@ def text_to_speech():
         return jsonify({"error": "Unable to generate audio"}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=False)
